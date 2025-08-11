@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "start": "npm i && node index.js",
+    "lint": "eslint . --ext .js",
+    "push": "git add . && git commit && git push",
+    "pull": "pm2 stop 0 && git pull && pm2 start 0"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}
