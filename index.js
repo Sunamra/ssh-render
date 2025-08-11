@@ -6,7 +6,7 @@ const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Serve a simple HTML client for SSH access
+// Serve simple HTML client with debug console
 app.get('/', (req, res) => {
   res.send(`
     <html>
@@ -15,15 +15,27 @@ app.get('/', (req, res) => {
         <script>
           const term = document.getElementById('terminal');
           const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+
+          function debug(msg) {
+            term.textContent += "\\n[DEBUG] " + msg + "\\n";
+            term.scrollTop = term.scrollHeight;
+            console.log(msg);
+          }
+
+          ws.onopen = () => debug('WebSocket connection opened.');
+          ws.onclose = () => debug('WebSocket connection closed.');
+          ws.onerror = (e) => debug('WebSocket error: ' + e.message);
+
           ws.onmessage = (event) => {
             term.textContent += event.data;
             term.scrollTop = term.scrollHeight;
           };
+
           document.addEventListener('keydown', (e) => {
             e.preventDefault();
             let key = e.key;
-            if (key === 'Enter') key = '\n';
-            if (key === 'Backspace') key = '\b';
+            if (key === 'Enter') key = '\\n';
+            if (key === 'Backspace') key = '\\b';
             ws.send(key);
           });
         </script>
@@ -33,27 +45,40 @@ app.get('/', (req, res) => {
 });
 
 wss.on('connection', (ws) => {
-  // Configure for Linux: connect to localhost SSH
+  ws.send('[DEBUG] New WebSocket client connected.\n');
+
   const shell = spawn('ssh', ['-tt', 'user@localhost'], {
     cwd: process.env.HOME,
     env: process.env,
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+
+  ws.send('[DEBUG] Spawned SSH process.\n');
 
   shell.stdout.on('data', (data) => {
     ws.send(data.toString());
   });
 
   shell.stderr.on('data', (data) => {
-    ws.send(data.toString());
+    ws.send('[SSH ERROR] ' + data.toString());
+  });
+
+  shell.on('error', (err) => {
+    ws.send('[DEBUG] Spawn error: ' + err.message + '\n');
+  });
+
+  shell.on('close', (code) => {
+    ws.send('[DEBUG] SSH process closed with code: ' + code + '\n');
+    ws.close();
   });
 
   ws.on('message', (msg) => {
+    ws.send('[DEBUG] Received input: ' + JSON.stringify(msg) + '\n');
     shell.stdin.write(msg);
   });
 
-  shell.on('close', () => {
-    ws.close();
+  ws.on('close', () => {
+    shell.kill();
   });
 });
 
