@@ -11,16 +11,20 @@ app.get('/', (req, res) => {
   res.send(`
     <html>
       <body style="margin:0; height: 100vh;">
-        <pre id="terminal" style="background:black;color:white;height:100vh;overflow:auto;"></pre>
+        <pre id="terminal" style="background:black;color:white;height:100vh;overflow:auto;white-space:pre-wrap;"></pre>
         <script>
           const term = document.getElementById('terminal');
-          const ws = new WebSocket('ws://' + location.host);
+          const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
           ws.onmessage = (event) => {
             term.textContent += event.data;
             term.scrollTop = term.scrollHeight;
           };
           document.addEventListener('keydown', (e) => {
-            ws.send(e.key);
+            e.preventDefault();
+            let key = e.key;
+            if (key === 'Enter') key = '\n';
+            if (key === 'Backspace') key = '\b';
+            ws.send(key);
           });
         </script>
       </body>
@@ -29,10 +33,11 @@ app.get('/', (req, res) => {
 });
 
 wss.on('connection', (ws) => {
-  // Start an SSH session via system ssh client (change user@host as needed)
-  const shell = spawn('ssh', ['user@localhost'], {
+  // Configure for Linux: connect to localhost SSH
+  const shell = spawn('ssh', ['-tt', 'user@localhost'], {
     cwd: process.env.HOME,
     env: process.env,
+    stdio: ['pipe', 'pipe', 'pipe']
   });
 
   shell.stdout.on('data', (data) => {
@@ -47,8 +52,8 @@ wss.on('connection', (ws) => {
     shell.stdin.write(msg);
   });
 
-  ws.on('close', () => {
-    shell.kill();
+  shell.on('close', () => {
+    ws.close();
   });
 });
 
