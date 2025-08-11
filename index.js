@@ -6,36 +6,84 @@ const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Serve simple HTML client with debug console
+// Serve simple HTML client with blinking cursor and cleaner output
 app.get('/', (req, res) => {
   res.send(`
     <html>
-      <body style="margin:0; height: 100vh;">
-        <pre id="terminal" style="background:black;color:white;height:100vh;overflow:auto;white-space:pre-wrap;"></pre>
+      <head>
+        <style>
+          body, html {
+            margin: 0; height: 100vh; background: black; color: white;
+            font-family: monospace; white-space: pre-wrap; overflow: auto;
+          }
+          #terminal {
+            padding: 10px;
+          }
+          #cursor {
+            display: inline-block;
+            width: 10px;
+            background-color: white;
+            animation: blink 1s step-start 0s infinite;
+            vertical-align: bottom;
+          }
+          @keyframes blink {
+            50% { background-color: transparent; }
+          }
+        </style>
+      </head>
+      <body>
+        <div id="terminal"></div><div id="cursor"></div>
         <script>
           const term = document.getElementById('terminal');
+          const cursor = document.getElementById('cursor');
           const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
 
-          function debug(msg) {
-            term.textContent += "\\n[DEBUG] " + msg + "\\n";
-            term.scrollTop = term.scrollHeight;
-            console.log(msg);
-          }
-
-          ws.onopen = () => debug('WebSocket connection opened.');
-          ws.onclose = () => debug('WebSocket connection closed.');
-          ws.onerror = (e) => debug('WebSocket error: ' + e.message);
-
-          ws.onmessage = (event) => {
-            term.textContent += event.data;
-            term.scrollTop = term.scrollHeight;
+          ws.onopen = () => {
+            appendDebug('[DEBUG] WebSocket connection opened.\\n');
+          };
+          ws.onclose = () => {
+            appendDebug('\\n[DEBUG] WebSocket connection closed.\\n');
+          };
+          ws.onerror = (e) => {
+            appendDebug('\\n[ERROR] WebSocket error: ' + e.message + '\\n');
           };
 
+          ws.onmessage = (event) => {
+            // Only show debug messages with [DEBUG] or [ERROR] prefix,
+            // else append normally to terminal
+            if (event.data.startsWith('[DEBUG]') || event.data.startsWith('[ERROR]') || event.data.startsWith('[SHELL ERROR]')) {
+              appendDebug('\\n' + event.data + '\\n');
+            } else {
+              appendTerminal(event.data);
+            }
+          };
+
+          function appendTerminal(text) {
+            term.textContent += text;
+            scrollToBottom();
+          }
+
+          function appendDebug(text) {
+            term.textContent += text;
+            scrollToBottom();
+          }
+
+          function scrollToBottom() {
+            window.scrollTo(0, document.body.scrollHeight);
+          }
+
+          // Send keys on keydown, and prevent default to avoid browser shortcuts
           document.addEventListener('keydown', (e) => {
             e.preventDefault();
+
             let key = e.key;
+
+            // Translate special keys to expected control characters
             if (key === 'Enter') key = '\\n';
-            if (key === 'Backspace') key = '\\b';
+            else if (key === 'Backspace') key = '\\x7f'; // DEL character for Backspace
+            else if (key === 'Tab') key = '\\t';
+            else if (key.length > 1) return; // Ignore other special keys (arrows, etc)
+
             ws.send(key);
           });
         </script>
@@ -47,7 +95,7 @@ app.get('/', (req, res) => {
 wss.on('connection', (ws) => {
   ws.send('[DEBUG] New WebSocket client connected.');
 
-  // Fallback to local shell if SSH is unavailable
+  // Spawn shell process (bash or powershell)
   const shellCmd = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash';
   const shellArgs = [];
 
@@ -68,7 +116,7 @@ wss.on('connection', (ws) => {
   });
 
   shell.on('error', (err) => {
-    ws.send('[DEBUG] Spawn error: ' + err.message + '\n');
+    ws.send('[ERROR] Spawn error: ' + err.message + '\n');
   });
 
   shell.on('close', (code) => {
@@ -77,7 +125,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('message', (msg) => {
-    ws.send('[DEBUG] Received input: ' + JSON.stringify(msg) + '\n');
+    // Don't send debug for every key input anymore
     shell.stdin.write(msg);
   });
 
