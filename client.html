@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+
+<head>
+	<meta charset="utf-8" />
+	<title>Web Shell</title>
+
+	<!-- xterm.css from CDN -->
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+	<style>
+		html,
+		body {
+			height: 100%;
+			margin: 0;
+			background: black;
+		}
+
+		#terminal {
+			height: 100vh;
+			width: 100vw;
+		}
+
+		/* ensure cursor color is white (xterm uses terminal theme for cursor) */
+	</style>
+</head>
+
+<body>
+	<div id="terminal"></div>
+
+	<!-- xterm.js and fit addon from CDN -->
+	<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+
+	<script>
+		const { Terminal } = window;
+		const { FitAddon } = window;
+		const term = new Terminal({
+			cursorBlink: true,        // blinking cursor
+			cursorStyle: 'block',
+			convertEol: true,
+			disableStdin: false,
+			cols: 80,
+			rows: 24,
+			theme: { background: '#000000', foreground: '#ffffff', cursor: '#ffffff' } // white cursor
+		});
+		const fitAddon = new FitAddon.FitAddon();
+		term.loadAddon(fitAddon);
+		term.open(document.getElementById('terminal'));
+		fitAddon.fit();
+
+		// Show connecting message until WS opens
+		term.write('\x1b[90mConnecting...\x1b[0m\r\n');
+
+		const protocol = (location.protocol === 'https:') ? 'wss' : 'ws';
+		const ws = new WebSocket(`${protocol}://${location.host}`);
+		// keep text messages (not binary); xterm emits strings with control codes
+		ws.onopen = () => {
+			term.clear();
+			term.focus();
+		};
+
+		ws.onmessage = (evt) => {
+			// server may send debug / error lines prefixed with [DEBUG] or [ERROR]
+			// just write everything to terminal
+			term.write(evt.data);
+		};
+
+		ws.onclose = () => {
+			term.write('\r\n\x1b[31m[DEBUG] Connection closed\x1b[0m\r\n');
+		};
+
+		ws.onerror = (e) => {
+			term.write('\r\n\x1b[31m[ERROR] WebSocket error\x1b[0m\r\n');
+		};
+
+		// Send all keys as-is from xterm to server
+		// onData gives the exact user input as string (including control sequences)
+		term.onData((data) => {
+			if (ws.readyState === WebSocket.OPEN) ws.send(data);
+		});
+
+		// Handle browser/window resize -> notify server to resize PTY
+		window.addEventListener('resize', () => {
+			fitAddon.fit();
+			const dims = { type: 'resize', cols: term.cols, rows: term.rows };
+			if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(dims));
+		});
+
+		// initial resize
+		const initial = { type: 'resize', cols: term.cols, rows: term.rows };
+		ws.addEventListener('open', () => {
+			ws.send(JSON.stringify(initial));
+		});
+
+		// local echo is handled by server output; however to make typed characters appear instantly
+		// xterm already shows typed chars only if you write them locally. We rely on server echo.
+		// If you want immediate local-echo, you can uncomment the following:
+		// term.onData((data) => { term.write(data); ws.send(data); });
+		//
+		// But with a real PTY and local shell, the PTY will echo characters back and terminal remains consistent.
+
+	</script>
+</body>
+
+</html>
